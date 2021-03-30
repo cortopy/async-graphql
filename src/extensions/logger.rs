@@ -6,7 +6,25 @@ use crate::extensions::{Extension, ExtensionContext, ExtensionFactory, ResolveIn
 use crate::parser::types::{ExecutableDocument, OperationType, Selection};
 use crate::{PathSegment, ServerError, Variables};
 
-/// Logger extension
+/// The web server you use with async-graphql may only log http information. This extension enables logging for graphql queries and variables.
+///
+/// This extension uses the `log` crate to output information. Enable `log`'s output for the
+/// "graphql-async" scope using [`env_logger`](https://docs.rs/env_logger) or similar crate.
+///
+/// # Examples
+/// ```
+/// use async_graphql::extensions::Logger;
+///
+/// // enable info log level for all scopes in your project
+/// std::env::set_var("RUST_LOG", "info");
+/// // or enable all log levels for graphql-async
+/// std::env::set_var("RUST_LOG", "graphql-async");
+/// // or maybe only the info log level for graphql-async
+/// std::env::set_var("RUST_LOG", "graphql-async=info");
+/// env_logger::init();
+///
+/// ```
+///
 #[cfg_attr(docsrs, doc(cfg(feature = "log")))]
 pub struct Logger;
 
