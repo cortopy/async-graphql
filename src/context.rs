@@ -4,8 +4,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::ops::Deref;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_graphql_value::{Value as InputValue, Variables};
 use fnv::FnvHashMap;
@@ -189,36 +188,6 @@ impl<'a> Iterator for Parents<'a> {
 
 impl<'a> std::iter::FusedIterator for Parents<'a> {}
 
-/// The unique id of the current resolution.
-#[derive(Debug, Clone, Copy)]
-pub struct ResolveId {
-    /// The unique ID of the parent resolution.
-    pub parent: Option<usize>,
-
-    /// The current unique id.
-    pub current: usize,
-}
-
-impl ResolveId {
-    #[doc(hidden)]
-    pub fn root() -> ResolveId {
-        ResolveId {
-            parent: None,
-            current: 0,
-        }
-    }
-}
-
-impl Display for ResolveId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if let Some(parent) = self.parent {
-            write!(f, "{}:{}", parent, self.current)
-        } else {
-            write!(f, "{}", self.current)
-        }
-    }
-}
-
 /// Query context.
 ///
 /// **This type is not stable and should not be used directly.**
@@ -226,8 +195,6 @@ impl Display for ResolveId {
 pub struct ContextBase<'a, T> {
     /// The current path node being resolved.
     pub path_node: Option<QueryPathNode<'a>>,
-    pub(crate) resolve_id: ResolveId,
-    pub(crate) inc_resolve_id: &'a AtomicUsize,
     #[doc(hidden)]
     pub item: T,
     #[doc(hidden)]
@@ -245,7 +212,7 @@ pub struct QueryEnvInner {
     pub uploads: Vec<UploadValue>,
     pub session_data: Arc<Data>,
     pub ctx_data: Arc<Data>,
-    pub http_headers: spin::Mutex<HeaderMap<String>>,
+    pub http_headers: Mutex<HeaderMap<String>>,
     pub disable_introspection: bool,
 }
 
@@ -273,13 +240,9 @@ impl QueryEnv {
         schema_env: &'a SchemaEnv,
         path_node: Option<QueryPathNode<'a>>,
         item: T,
-        resolve_id: ResolveId,
-        inc_resolve_id: &'a AtomicUsize,
     ) -> ContextBase<'a, T> {
         ContextBase {
             path_node,
-            resolve_id,
-            inc_resolve_id,
             item,
             schema_env,
             query_env: self,
@@ -288,18 +251,6 @@ impl QueryEnv {
 }
 
 impl<'a, T> ContextBase<'a, T> {
-    #[doc(hidden)]
-    pub fn get_child_resolve_id(&self) -> ResolveId {
-        let id = self
-            .inc_resolve_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1;
-        ResolveId {
-            parent: Some(self.resolve_id.current),
-            current: id,
-        }
-    }
-
     #[doc(hidden)]
     pub fn with_field(
         &'a self,
@@ -311,8 +262,6 @@ impl<'a, T> ContextBase<'a, T> {
                 segment: QueryPathSegment::Name(&field.node.response_key().node),
             }),
             item: field,
-            resolve_id: self.get_child_resolve_id(),
-            inc_resolve_id: self.inc_resolve_id,
             schema_env: self.schema_env,
             query_env: self.query_env,
         }
@@ -326,8 +275,6 @@ impl<'a, T> ContextBase<'a, T> {
         ContextBase {
             path_node: self.path_node,
             item: selection_set,
-            resolve_id: self.resolve_id,
-            inc_resolve_id: &self.inc_resolve_id,
             schema_env: self.schema_env,
             query_env: self.query_env,
         }
@@ -397,7 +344,11 @@ impl<'a, T> ContextBase<'a, T> {
     /// }
     /// ```
     pub fn http_header_contains(&self, key: impl AsHeaderName) -> bool {
-        self.query_env.http_headers.lock().contains_key(key)
+        self.query_env
+            .http_headers
+            .lock()
+            .unwrap()
+            .contains_key(key)
     }
 
     /// Sets a HTTP header to response.
@@ -448,6 +399,7 @@ impl<'a, T> ContextBase<'a, T> {
         self.query_env
             .http_headers
             .lock()
+            .unwrap()
             .insert(name, value.into())
     }
 
@@ -487,6 +439,7 @@ impl<'a, T> ContextBase<'a, T> {
         self.query_env
             .http_headers
             .lock()
+            .unwrap()
             .append(name, value.into())
     }
 
@@ -560,8 +513,6 @@ impl<'a> ContextBase<'a, &'a Positioned<SelectionSet>> {
                 segment: QueryPathSegment::Index(idx),
             }),
             item: self.item,
-            resolve_id: self.get_child_resolve_id(),
-            inc_resolve_id: self.inc_resolve_id,
             schema_env: self.schema_env,
             query_env: self.query_env,
         }
@@ -661,10 +612,11 @@ impl<'a> ContextBase<'a, &'a Positioned<Field>> {
     /// });
     ///
     /// ```
-    pub fn field(&self) -> SelectionField<'a> {
+    pub fn field(&self) -> SelectionField {
         SelectionField {
             fragments: &self.query_env.fragments,
             field: &self.item.node,
+            context: self,
         }
     }
 }
@@ -674,12 +626,36 @@ impl<'a> ContextBase<'a, &'a Positioned<Field>> {
 pub struct SelectionField<'a> {
     fragments: &'a HashMap<Name, Positioned<FragmentDefinition>>,
     field: &'a Field,
+    context: &'a Context<'a>,
 }
 
 impl<'a> SelectionField<'a> {
     /// Get the name of this field.
+    #[inline]
     pub fn name(&self) -> &'a str {
         self.field.name.node.as_str()
+    }
+
+    /// Get the alias of this field.
+    #[inline]
+    pub fn alias(&self) -> Option<&'a str> {
+        self.field.alias.as_ref().map(|alias| alias.node.as_str())
+    }
+
+    /// Get the arguments of this field.
+    pub fn arguments(&self) -> ServerResult<Vec<(Name, Value)>> {
+        let mut arguments = Vec::with_capacity(self.field.arguments.len());
+        for (name, value) in &self.field.arguments {
+            let pos = name.pos;
+            arguments.push((
+                name.node.clone(),
+                value
+                    .clone()
+                    .node
+                    .into_const_with(|name| self.context.var_value(&name, pos))?,
+            ));
+        }
+        Ok(arguments)
     }
 
     /// Get all subfields of the current selection set.
@@ -687,20 +663,21 @@ impl<'a> SelectionField<'a> {
         SelectionFieldsIter {
             fragments: self.fragments,
             iter: vec![self.field.selection_set.node.items.iter()],
+            context: self.context,
         }
-    }
-}
-
-struct DebugSelectionSet<'a>(Vec<SelectionField<'a>>);
-
-impl<'a> Debug for DebugSelectionSet<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.0.clone()).finish()
     }
 }
 
 impl<'a> Debug for SelectionField<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        struct DebugSelectionSet<'a>(Vec<SelectionField<'a>>);
+
+        impl<'a> Debug for DebugSelectionSet<'a> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                f.debug_list().entries(&self.0).finish()
+            }
+        }
+
         f.debug_struct(self.name())
             .field("name", &self.name())
             .field(
@@ -714,6 +691,7 @@ impl<'a> Debug for SelectionField<'a> {
 struct SelectionFieldsIter<'a> {
     fragments: &'a HashMap<Name, Positioned<FragmentDefinition>>,
     iter: Vec<std::slice::Iter<'a, Positioned<Selection>>>,
+    context: &'a Context<'a>,
 }
 
 impl<'a> Iterator for SelectionFieldsIter<'a> {
@@ -728,6 +706,7 @@ impl<'a> Iterator for SelectionFieldsIter<'a> {
                         return Some(SelectionField {
                             fragments: self.fragments,
                             field: &field.node,
+                            context: self.context,
                         });
                     }
                     Selection::FragmentSpread(fragment_spread) => {

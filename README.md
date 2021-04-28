@@ -34,7 +34,7 @@
 * [Docs](https://docs.rs/async-graphql)
 * [GitHub repository](https://github.com/async-graphql/async-graphql)
 * [Cargo package](https://crates.io/crates/async-graphql)
-* Minimum supported Rust version: 1.46 or later
+* Minimum supported Rust version: 1.50.0 or later
 
 ## Safety
 
@@ -99,8 +99,8 @@ cd examples && cargo run --bin [name]
 Licensed under either of
 
 * Apache License, Version 2.0,
-  (./LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0)
-* MIT license (./LICENSE-MIT or http://opensource.org/licenses/MIT)
+  ([LICENSE-APACHE](./LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+* MIT license ([LICENSE-MIT](./LICENSE-MIT) or http://opensource.org/licenses/MIT)
   at your option.
 
 ## References

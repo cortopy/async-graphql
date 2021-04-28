@@ -111,13 +111,24 @@ impl Registry {
                 description,
                 ..
             } => {
-                if name == &self.query_type && federation && fields.len() <= 4 {
-                    // Is empty query root, only __schema, __type, _service, _entities fields
+                if Some(name.as_str()) == self.subscription_type.as_deref()
+                    && federation
+                    && !self.federation_subscription
+                {
                     return;
                 }
 
-                if let Some(subscription_type) = &self.subscription_type {
-                    if name == subscription_type && !self.federation_subscription {
+                if name.as_str() == self.query_type && federation {
+                    let mut field_count = 0;
+                    for field in fields.values() {
+                        if field.name.starts_with("__")
+                            || (federation && matches!(&*field.name, "_service" | "_entities"))
+                        {
+                            continue;
+                        }
+                        field_count += 1;
+                    }
+                    if field_count == 0 {
                         return;
                     }
                 }

@@ -185,6 +185,7 @@ pub struct Argument {
     pub validator: Option<Meta>,
     pub key: bool, // for entity
     pub visible: Option<Visible>,
+    pub secret: bool,
 }
 
 #[derive(FromMeta, Default)]
@@ -322,6 +323,8 @@ pub struct InputObjectField {
     pub skip: bool,
     #[darling(default)]
     pub visible: Option<Visible>,
+    #[darling(default)]
+    pub secret: bool,
 }
 
 #[derive(FromDeriveInput)]
@@ -357,6 +360,8 @@ pub struct InterfaceFieldArgument {
     pub default_with: Option<LitStr>,
     #[darling(default)]
     pub visible: Option<Visible>,
+    #[darling(default)]
+    pub secret: bool,
 }
 
 #[derive(FromMeta)]
@@ -441,6 +446,7 @@ pub struct SubscriptionFieldArgument {
     pub default_with: Option<LitStr>,
     pub validator: Option<Meta>,
     pub visible: Option<Visible>,
+    pub secret: bool,
 }
 
 #[derive(FromMeta, Default)]
@@ -577,14 +583,51 @@ pub struct Description {
     pub internal: bool,
 }
 
+#[derive(Debug)]
+pub enum NewTypeName {
+    UseNewName(String),
+    UseRustName,
+    UseOriginalName,
+}
+
+impl Default for NewTypeName {
+    fn default() -> Self {
+        Self::UseOriginalName
+    }
+}
+
+impl FromMeta for NewTypeName {
+    fn from_word() -> darling::Result<Self> {
+        Ok(Self::UseRustName)
+    }
+
+    fn from_string(value: &str) -> darling::Result<Self> {
+        Ok(Self::UseNewName(value.to_string()))
+    }
+
+    fn from_bool(value: bool) -> darling::Result<Self> {
+        if value {
+            Ok(Self::UseRustName)
+        } else {
+            Ok(Self::UseOriginalName)
+        }
+    }
+}
+
 #[derive(FromDeriveInput)]
+#[darling(attributes(graphql), forward_attrs(doc))]
 pub struct NewType {
     pub ident: Ident,
     pub generics: Generics,
+    pub attrs: Vec<Attribute>,
     pub data: Data<Ignored, syn::Type>,
 
     #[darling(default)]
     pub internal: bool,
+    #[darling(default)]
+    pub name: NewTypeName,
+    #[darling(default)]
+    pub visible: Option<Visible>,
 }
 
 #[derive(FromMeta, Default)]

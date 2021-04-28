@@ -149,6 +149,7 @@ pub fn generate(
                     default_with,
                     validator,
                     visible,
+                    secret,
                     ..
                 },
             ) in &args
@@ -191,6 +192,7 @@ pub fn generate(
                         default_value: #schema_default,
                         validator: #validator,
                         visible: #visible,
+                        is_secret: #secret,
                     });
                 });
 
@@ -309,7 +311,7 @@ pub fn generate(
             let resolve_obj = quote! {
                 {
                     let res = self.#field_ident(ctx, #(#use_params),*).await;
-                    res.map_err(|err| err.into_server_error().at(ctx.item.pos))?
+                    res.map_err(|err| ::std::convert::Into::<#crate_name::Error>::into(err).into_server_error().at(ctx.item.pos))?
                 }
             };
 
